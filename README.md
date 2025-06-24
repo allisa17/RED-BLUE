@@ -43,7 +43,7 @@ cd Keylogger
 python keylogger.py
 ```
 
-CREATE NEW FOLDER "HIDS"
+##CREATE NEW FOLDER "HIDS"
 
 Type in terminal:
 ```bash
@@ -152,9 +152,10 @@ SECLab/
         ├── config.txt
         └── notes.txt
 
-CREATE logs, protected_Files folder
+### CREATE logs, protected_Files folder
 
-Fim.py
+## Fim.py
+
 ```bash
 import os, hashlib, time
 from datetime import datetime
@@ -218,6 +219,6 @@ To run:
 python fim.py
 ```
 
-then create any txt file in the protected files, see the changes in fi,_alerts.
+#### then create any txt file in the protected files, see the changes in fim_alerts.
 
 
