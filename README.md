@@ -53,92 +53,104 @@ pip install psutil
 hids.py
 ```bash
 import psutil
-import hashlib
 import os
 import time
-import ctypes
+from datetime import datetime
+import threading
+import tkinter as tk
+from tkinter import messagebox, ttk
 
-# === CONFIG ===
-MALICIOUS_KEYWORDS = ["keylogger"]
-KNOWN_BAD_HASHES = ["e99a18c428cb38d5f260853678922e03"]  # demo hash
-QUARANTINE_FOLDER = "quarantine"
-LOG_FILE = "hids_log.txt"
+log_dir = "logs"
+os.makedirs(log_dir, exist_ok=True)
+hids_log = os.path.join(log_dir, "hids_log.txt")
 
-if not os.path.exists(QUARANTINE_FOLDER):
-    os.makedirs(QUARANTINE_FOLDER)
+known_browsers = ["chrome", "firefox", "msedge", "iexplore", "opera", "brave", "safari"]
+known_apps = known_browsers + ["word", "excel", "powerpoint", "notepad", "photoshop", "teams", "zoom", "vlc"]
+seen_pids = set()
 
-# === HELPER FUNCTIONS ===
-def hash_file(filepath):
-    try:
-        with open(filepath, 'rb') as f:
-            return hashlib.sha256(f.read()).hexdigest()
-    except:
-        return None
+class HIDSApp:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("Modern Host-Based IDS Monitor")
+        self.root.geometry("950x400")
+        style = ttk.Style(self.root)
+        style.theme_use("clam")
 
-def log_alert(message):
-    # Terminal + File + Popup
-    print(f"\033[91m{message}\033[0m")  # Red color in terminal
-    with open(LOG_FILE, "a") as log_file:
-        log_file.write(message + "\n")
-    ctypes.windll.user32.MessageBoxW(0, message, "Mini HIDS Alert", 1)
+        title = tk.Label(root, text="Real-Time HIDS Dashboard", font=("Segoe UI", 20, "bold"), fg="#2e7d32")
+        title.pack(pady=10)
 
-# === MAIN FUNCTION ===
-def scan_processes():
-    for proc in psutil.process_iter(['pid', 'name', 'exe', 'cmdline']):
-        try:
-            name = proc.info['name']
-            cmd = ' '.join(proc.info['cmdline']) if proc.info['cmdline'] else ''
-            exe_path = proc.info['exe']
+        self.tree = ttk.Treeview(root, 
+                         columns=("Time", "Process", "PID", "Status", "CMD"), 
+                         show="headings", height=16)
+        self.tree.pack(fill=tk.BOTH, expand=True)
+        for col in self.tree["columns"]:
+            self.tree.heading(col, text=col)
+            self.tree.column(col, anchor=tk.CENTER)
+        self.tree.column("Time", width=130)
+        self.tree.column("Process", width=160)
+        self.tree.column("PID", width=70)
+        self.tree.column("Status", width=100)
+        self.tree.column("CMD", width=300)
 
-            # Skip itself
-            if name and "hids" in name.lower():
-                continue
+        self.running = True
+        threading.Thread(target=self.monitor_thread, daemon=True).start()
 
-            # -- Keyword Detection --
-            if any(kw in cmd.lower() for kw in MALICIOUS_KEYWORDS):
-                alert_msg = (
-                    f"[ALERT] Suspicious keyword found!\n"
-                    f"Process: {name}\n"
-                    f"PID: {proc.info['pid']}\n"
-                    f"CMD: {cmd}\n"
-                    f"File: {exe_path}"
-                )
-                log_alert(alert_msg)
+    def monitor_thread(self):
+        while self.running:
+            alert_queue = []
+            for proc in psutil.process_iter(['pid', 'name', 'exe', 'cmdline']):
+                try:
+                    name = (proc.info['name'] or "").lower()
+                    pid = proc.info['pid']
+                    cmd = " ".join(proc.info.get('cmdline') or [])
+                    timestamp = datetime.now().strftime('%H:%M:%S')
+                    status = "NORMAL"
+                    color = "#2e7d32"
+                    alert = False
 
-                # Safe quarantine
-                if exe_path and os.path.exists(exe_path):
-                    if "python" in os.path.basename(exe_path).lower():
-                        continue  # don't quarantine python.exe
+                    # Only show new events
+                    if pid not in seen_pids:
+                        if any(app in name for app in known_apps):
+                            status = "SUSPICIOUS" if any(b in name for b in known_browsers) else "MONITORED APP"
+                            color = "#c62828" if status == "SUSPICIOUS" else "#1565c0"
+                            alert = True
+                            with open(hids_log, "a") as f:
+                                f.write(f"{datetime.now()}: {name} ({pid}) {status} CMD: {cmd}\n")
 
-                    proc.kill()
-                    quarantine_path = os.path.join(QUARANTINE_FOLDER, os.path.basename(exe_path))
-                    os.rename(exe_path, quarantine_path)
-                    log_alert(f"[X] Quarantined: {exe_path}")
+                            self.tree.insert("", 0, values=(timestamp, name, pid, status, cmd), tags=("alert",))
+                            self.tree.tag_configure("alert", foreground=color)
+                            if alert:
+                                alert_queue.append((name, pid, status))
+                        else:
+                            self.tree.insert("", 0, values=(timestamp, name, pid, status, cmd), tags=("normal",))
+                            self.tree.tag_configure("normal", foreground=color)
+                        seen_pids.add(pid)
+                except Exception:
+                    continue
 
-            # -- Hash Detection --
-            if exe_path and os.path.exists(exe_path):
-                file_hash = hash_file(exe_path)
-                if file_hash in KNOWN_BAD_HASHES:
-                    alert_msg = (
-                        f"[ALERT] Malicious hash match!\n"
-                        f"Process: {name}\n"
-                        f"PID: {proc.info['pid']}\n"
-                        f"Hash: {file_hash}\n"
-                        f"File: {exe_path}"
-                    )
-                    log_alert(alert_msg)
+            # Pop-up any alerts on the main thread
+            for name, pid, status in alert_queue:
+                self.root.after(0, self.show_popup, name, pid, status)
 
-                    proc.kill()
-                    quarantine_path = os.path.join(QUARANTINE_FOLDER, os.path.basename(exe_path))
-                    os.rename(exe_path, quarantine_path)
-                    log_alert(f"[X] Quarantined by hash: {exe_path}")
+            time.sleep(1)
 
-        except Exception:
-            continue
-# === ENTRY POINT ===
+    def show_popup(self, name, pid, status):
+        # Popup for suspicious process/app on main thread
+        messagebox.showwarning(
+            "HIDS ALERT!",
+            f"Detected:\nProcess: {name}\nPID: {pid}\nStatus: {status}"
+        )
+
+    def on_close(self):
+        self.running = False
+        self.root.destroy()
+
 if __name__ == "__main__":
-    print("== Mini Host-Based IDS Started ==")
-    scan_processes()
+    root = tk.Tk()
+    app = HIDSApp(root)
+    root.protocol("WM_DELETE_WINDOW", app.on_close)
+    root.mainloop()
+
 
 ```
 
