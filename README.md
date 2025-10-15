@@ -79,17 +79,15 @@ class HIDSApp:
         title = tk.Label(root, text="Real-Time HIDS Dashboard", font=("Segoe UI", 20, "bold"), fg="#2e7d32")
         title.pack(pady=10)
 
-        self.tree = ttk.Treeview(root, 
-                         columns=("Time", "Process", "PID", "Status", "CMD"), 
-                         show="headings", height=16)
+        self.tree = ttk.Treeview(root, columns=("Time", "Process", "PID", "Status", "CMD"), show="headings", height=16)
         self.tree.pack(fill=tk.BOTH, expand=True)
         for col in self.tree["columns"]:
             self.tree.heading(col, text=col)
             self.tree.column(col, anchor=tk.CENTER)
         self.tree.column("Time", width=130)
-        self.tree.column("Process", width=160)
-        self.tree.column("PID", width=70)
-        self.tree.column("Status", width=100)
+        self.tree.column("Process", width=200)
+        self.tree.column("PID", width=80)
+        self.tree.column("Status", width=120)
         self.tree.column("CMD", width=300)
 
         self.running = True
@@ -97,7 +95,6 @@ class HIDSApp:
 
     def monitor_thread(self):
         while self.running:
-            alert_queue = []
             for proc in psutil.process_iter(['pid', 'name', 'exe', 'cmdline']):
                 try:
                     name = (proc.info['name'] or "").lower()
@@ -116,30 +113,18 @@ class HIDSApp:
                             alert = True
                             with open(hids_log, "a") as f:
                                 f.write(f"{datetime.now()}: {name} ({pid}) {status} CMD: {cmd}\n")
-
                             self.tree.insert("", 0, values=(timestamp, name, pid, status, cmd), tags=("alert",))
                             self.tree.tag_configure("alert", foreground=color)
-                            if alert:
-                                alert_queue.append((name, pid, status))
+                            # Popup for suspicious process (optional, can uncomment if you want alerts)
+                            # if alert:
+                            #     self.root.after(0, lambda: messagebox.showwarning("HIDS ALERT!", f"Detected: {name} (PID: {pid}) -- {status}"))
                         else:
                             self.tree.insert("", 0, values=(timestamp, name, pid, status, cmd), tags=("normal",))
                             self.tree.tag_configure("normal", foreground=color)
                         seen_pids.add(pid)
                 except Exception:
                     continue
-
-            # Pop-up any alerts on the main thread
-            for name, pid, status in alert_queue:
-                self.root.after(0, self.show_popup, name, pid, status)
-
             time.sleep(1)
-
-    def show_popup(self, name, pid, status):
-        # Popup for suspicious process/app on main thread
-        messagebox.showwarning(
-            "HIDS ALERT!",
-            f"Detected:\nProcess: {name}\nPID: {pid}\nStatus: {status}"
-        )
 
     def on_close(self):
         self.running = False
@@ -150,6 +135,7 @@ if __name__ == "__main__":
     app = HIDSApp(root)
     root.protocol("WM_DELETE_WINDOW", app.on_close)
     root.mainloop()
+
 
 
 ```
